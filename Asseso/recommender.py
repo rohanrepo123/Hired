@@ -54,6 +54,31 @@ def type_code(item: dict) -> str:
     return ",".join(codes) or "K"
 
 
+def format_keys(item: dict) -> str:
+    keys = item.get("keys", [])
+    if isinstance(keys, list):
+        return ", ".join(str(key).strip() for key in keys if str(key).strip()) or "-"
+    return str(keys).strip() or "-"
+
+
+def format_languages(item: dict, visible: int = 3) -> str:
+    languages = item.get("languages", [])
+    if not isinstance(languages, list):
+        text = str(languages).strip()
+        return text or "-"
+
+    cleaned = [str(language).strip() for language in languages if str(language).strip()]
+    if len(cleaned) <= visible:
+        return ", ".join(cleaned) or "-"
+
+    remaining = len(cleaned) - visible
+    return f"{', '.join(cleaned[:visible])} (+{remaining} more)"
+
+
+def format_duration(item: dict) -> str:
+    return str(item.get("duration", "")).strip() or "-"
+
+
 def extract_json_object(text: str) -> dict | None:
     text = text.strip()
     if text.startswith("```"):
@@ -109,6 +134,9 @@ def clean_recommendations(raw_recommendations) -> list[dict]:
                 "name": item.get("name", ""),
                 "url": url,
                 "test_type": type_code(item),
+                "keys": format_keys(item),
+                "duration": format_duration(item),
+                "languages": format_languages(item),
             }
         )
         seen_urls.add(url)

@@ -22,6 +22,9 @@ class Recommendation(BaseModel):
     name: str
     url: str
     test_type: str
+    keys: str
+    duration: str
+    languages: str
 
 
 class ChatResponse(BaseModel):
@@ -105,20 +108,51 @@ def chat_page() -> str:
       border-top: 1px solid var(--line);
       padding-top: 8px;
       display: grid;
-      gap: 8px;
+      gap: 10px;
     }
-    .rec {
-      display: grid;
-      gap: 2px;
+    .rec-summary {
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .rec-table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    .rec-table {
+      width: 100%;
+      min-width: 760px;
+      border-collapse: collapse;
       font-size: 14px;
+      background: #fbfcfe;
     }
-    .rec a {
+    .rec-table th,
+    .rec-table td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+    .rec-table th {
+      background: #f2f6fb;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .02em;
+      text-transform: uppercase;
+    }
+    .rec-table tr:last-child td {
+      border-bottom: 0;
+    }
+    .rec-table a {
       color: var(--accent-dark);
       font-weight: 700;
       text-decoration: none;
     }
-    .rec span {
+    .rec-table .index {
+      width: 36px;
       color: var(--muted);
+      white-space: nowrap;
     }
     form {
       position: fixed;
@@ -192,19 +226,61 @@ def chat_page() -> str:
       if (recommendations.length) {
         const recs = document.createElement("div");
         recs.className = "recs";
+
+        const summary = document.createElement("div");
+        summary.className = "rec-summary";
+        summary.textContent = `${recommendations.length} SHL assessments matched this role.`;
+        recs.append(summary);
+
+        const tableWrap = document.createElement("div");
+        tableWrap.className = "rec-table-wrap";
+
+        const table = document.createElement("table");
+        table.className = "rec-table";
+
+        const thead = document.createElement("thead");
+        const headerRow = document.createElement("tr");
+        ["#", "Name", "Test Type", "Keys", "Duration", "Languages", "URL"].forEach((label) => {
+          const cell = document.createElement("th");
+          cell.textContent = label;
+          headerRow.append(cell);
+        });
+        thead.append(headerRow);
+        table.append(thead);
+
+        const tbody = document.createElement("tbody");
         recommendations.forEach((rec, index) => {
-          const row = document.createElement("div");
-          row.className = "rec";
+          const row = document.createElement("tr");
+          const values = [
+            { text: String(index + 1), className: "index" },
+            { text: rec.name },
+            { text: rec.test_type },
+            { text: rec.keys || "-" },
+            { text: rec.duration || "-" },
+            { text: rec.languages || "-" },
+          ];
+
+          values.forEach((value) => {
+            const cell = document.createElement("td");
+            cell.textContent = value.text;
+            if (value.className) cell.className = value.className;
+            row.append(cell);
+          });
+
+          const linkCell = document.createElement("td");
           const link = document.createElement("a");
           link.href = rec.url;
           link.target = "_blank";
           link.rel = "noreferrer";
-          link.textContent = `${index + 1}. ${rec.name}`;
-          const meta = document.createElement("span");
-          meta.textContent = `Type: ${rec.test_type}`;
-          row.append(link, meta);
-          recs.append(row);
+          link.textContent = "Open";
+          linkCell.append(link);
+          row.append(linkCell);
+          tbody.append(row);
         });
+
+        table.append(tbody);
+        tableWrap.append(table);
+        recs.append(tableWrap);
         item.append(recs);
       }
 
