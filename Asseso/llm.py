@@ -63,6 +63,9 @@ Rules:
   1. role name
   2. job level
   3. key abilities
+- Key abilities may be explicit or strongly implied by the role. For example:
+  senior leadership implies strategic thinking, decision-making, leadership, and business acumen;
+  finance analyst implies finance knowledge, numerical reasoning, accounting, and analytical ability.
 - As soon as those three are present, prefer retrieval and do not ask for any more detail.
 - search_query must be concise, specific, and suitable for vector search.
 - missing_question must be exactly one targeted question and empty when ready=true.
@@ -371,42 +374,30 @@ def _repair_recommendation_payload(
     role_summary: str,
 ) -> str:
     payload = _json_from_text(raw_response)
-    if not isinstance(payload, dict) or plan_action != "retrieve":
+    if plan_action != "retrieve":
         return raw_response
 
     context_recommendations = _context_recommendations(retrieved_context)
     if not context_recommendations:
         return raw_response
 
-    context_names = {item["name"] for item in context_recommendations}
-    context_urls = {item["url"] for item in context_recommendations}
-    raw_recommendations = payload.get("recommendations", [])
-    has_valid_recommendation = (
-        isinstance(raw_recommendations, list)
-        and any(
-            isinstance(item, dict)
-            and (item.get("name") in context_names or item.get("url") in context_urls)
-            for item in raw_recommendations
-        )
-    )
-    if has_valid_recommendation:
-        table = _format_reply_table(role_summary, retrieved_context)
-        reply = str(payload.get("reply") or "").strip()
-        if table and "| # | Name | Test Type |" not in reply:
-            payload["reply"] = f"{reply}\n\n{table}" if reply else table
-            return json.dumps(payload, ensure_ascii=False)
-        return raw_response
-
     names = ", ".join(item["name"] for item in context_recommendations[:3])
     table = _format_reply_table(role_summary, retrieved_context)
-    payload["reply"] = (
-        str(payload.get("reply") or "").strip()
-        or f"Here are catalog-backed SHL assessments that fit this role: {names}."
-    )
-    if names and names not in payload["reply"]:
-        payload["reply"] = f"{payload['reply']} Recommended catalog options: {names}."
-    if table and "| # | Name | Test Type |" not in payload["reply"]:
-        payload["reply"] = f"{payload['reply']}\n\n{table}"
+    if not isinstance(payload, dict):
+        payload = {
+            "reply": f"Here are catalog-backed SHL assessments that fit this role: {names}.",
+            "recommendations": [],
+            "end_of_conversation": False,
+        }
+
+    reply = str(payload.get("reply") or "").strip()
+    if not reply:
+        reply = f"Here are catalog-backed SHL assessments that fit this role: {names}."
+    if names and names not in reply:
+        reply = f"{reply} Recommended catalog options: {names}."
+    if table and "| # | Name | Test Type |" not in reply:
+        reply = f"{reply}\n\n{table}"
+    payload["reply"] = reply
     payload["recommendations"] = context_recommendations
     payload["end_of_conversation"] = bool(payload.get("end_of_conversation", False))
     return json.dumps(payload, ensure_ascii=False)
@@ -493,6 +484,12 @@ def plan_next_step(messages: list[dict]) -> dict:
                 "search_query": query,
                 "reason": str(plan.get("reason") or ""),
             }
+        if summary["missing_question"]:
+            return {
+                "action": "clarify",
+                "search_query": "",
+                "reason": summary["missing_question"],
+            }
 
     return {
         "action": action,
@@ -530,8 +527,28 @@ def generate_agent_reply(messages: list[dict]) -> str:
     plan = plan_next_step(messages)
     retrieved_context = []
 
+    if plan["action"] == "clarify":
+        return json.dumps(
+            {
+                "reply": plan["reason"] or deterministic_first_question(messages),
+                "recommendations": [],
+                "end_of_conversation": False,
+            },
+            ensure_ascii=False,
+        )
+
     if plan["action"] in {"retrieve", "compare"} and plan["search_query"]:
         retrieved_context = json.loads(Search_indocs(plan["search_query"]))
+
+    if plan["action"] == "retrieve" and not _context_recommendations(retrieved_context):
+        return json.dumps(
+            {
+                "reply": "I tried to retrieve matching SHL catalog products but did not get usable results from the vector database. Please check that DB.py ran successfully on Render and that chroma_db was created during build.",
+                "recommendations": [],
+                "end_of_conversation": False,
+            },
+            ensure_ascii=False,
+        )
 
     response = llm.invoke(
         [
