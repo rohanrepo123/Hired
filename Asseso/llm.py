@@ -179,6 +179,56 @@ def _user_messages(messages: list[dict]) -> list[str]:
     ]
 
 
+def _search_query_from_messages(messages: list[dict]) -> str:
+    user_texts = _user_messages(messages)
+    if not user_texts:
+        return ""
+
+    query = " ".join(user_texts[-3:])
+    words = query.split()
+    if len(words) > 35:
+        query = " ".join(words[-35:])
+    return query
+
+
+def _looks_too_vague(text: str) -> bool:
+    normalized = text.lower().strip()
+    vague_messages = {
+        "hi",
+        "hii",
+        "hello",
+        "hey",
+        "assessment",
+        "assessments",
+        "i need assessment",
+        "i need assessments",
+        "recommend assessment",
+        "recommend assessments",
+        "what should i use",
+    }
+    return normalized in vague_messages or len(normalized.split()) < 3
+
+
+def _is_satisfied_message(text: str) -> bool:
+    normalized = text.lower().strip()
+    if any(term in normalized for term in ("show", "change", "replace", "remove", "add", "compare", "more")):
+        return False
+    return any(
+        term in normalized
+        for term in (
+            "thanks",
+            "thank you",
+            "looks good",
+            "works",
+            "perfect",
+            "done",
+            "ok thanks",
+            "that's all",
+            "that is all",
+        )
+    )
+
+
 def deterministic_first_question(messages: list[dict]) -> str:
     text = _latest_user_text(messages).lower()
 
@@ -311,6 +361,41 @@ def _context_recommendations(retrieved_context: list[dict], limit: int = 5) -> l
             break
 
     return recommendations
+
+
+def _direct_retrieval_payload(messages: list[dict]) -> str:
+    query = _search_query_from_messages(messages)
+    if not query or _looks_too_vague(query):
+        return json.dumps(
+            {
+                "reply": "Tell me the role name, job level, and key abilities. I will use those directly to retrieve SHL assessments.",
+                "recommendations": [],
+                "end_of_conversation": False,
+            },
+            ensure_ascii=False,
+        )
+
+    retrieved_context = json.loads(Search_indocs(query))
+    recommendations = _context_recommendations(retrieved_context, limit=6)
+    if not recommendations:
+        return json.dumps(
+            {
+                "reply": "I could not find catalog-backed SHL assessments for that query. Try giving the role name, job level, and key abilities in one sentence.",
+                "recommendations": [],
+                "end_of_conversation": False,
+            },
+            ensure_ascii=False,
+        )
+
+    names = ", ".join(item["name"] for item in recommendations[:3])
+    return json.dumps(
+        {
+            "reply": f"I found SHL assessments using cosine similarity for: {query}. Top matches include {names}.",
+            "recommendations": recommendations,
+            "end_of_conversation": False,
+        },
+        ensure_ascii=False,
+    )
 
 
 def _format_languages(languages: str, visible: int = 3) -> str:
@@ -502,52 +587,15 @@ def plan_next_step(messages: list[dict]) -> dict:
 
 
 def generate_agent_reply(messages: list[dict]) -> str:
-    user_messages = _user_messages(messages)
-    if len(user_messages) == 1:
-        summary = summarize_role_requirements(messages)
-        if not summary["ready"]:
-            question = deterministic_first_question(messages)
-            return json.dumps(
-                {
-                    "reply": question,
-                    "recommendations": [],
-                    "end_of_conversation": False,
-                },
-                ensure_ascii=False,
-            )
-
-    satisfaction = check_client_satisfaction(messages)
-    if satisfaction["satisfied"]:
+    latest_user_text = _latest_user_text(messages)
+    if _is_satisfied_message(latest_user_text):
         return json.dumps(
             {
-                "reply": satisfaction["reply"] or "Thanks. I am glad the shortlist works for you.",
+                "reply": "Thanks. I am glad the shortlist works for you.",
                 "recommendations": [],
                 "end_of_conversation": True,
             },
             ensure_ascii=False,
         )
 
-    plan = plan_next_step(messages)
-    retrieved_context = []
-
-    if plan["action"] in {"retrieve", "compare"} and plan["search_query"]:
-        retrieved_context = json.loads(Search_indocs(plan["search_query"]))
-
-    response = llm.invoke(
-        [
-            {"role": "system", "content": ANSWER_PROMPT},
-            {
-                "role": "user",
-                "content": json.dumps(
-                    {
-                        "conversation": messages,
-                        "planner_action": plan["action"],
-                        "planner_search_query": plan["search_query"],
-                        "retrieved_catalog_context": retrieved_context,
-                    },
-                    ensure_ascii=False,
-                ),
-            },
-        ]
-    )
-    return _repair_recommendation_payload(response.content, plan["action"], retrieved_context, plan["reason"])
+    return _direct_retrieval_payload(messages)
