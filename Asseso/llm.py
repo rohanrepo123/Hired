@@ -52,6 +52,46 @@ Sample-trace behavior to imitate:
 """.strip()
 
 
+SUMMARY_PROMPT = """
+You decide whether a hiring conversation has enough information to retrieve SHL assessments.
+
+Return only valid JSON:
+{
+  "ready": true,
+  "search_query": "short retrieval query, max 18 words",
+  "role_summary": "one-sentence hiring brief",
+  "missing_question": "one targeted question if not ready"
+}
+
+Rules:
+- Mark ready=true when the conversation contains enough detail to search the SHL catalog.
+- Prefer retrieval once the role, audience/seniority, and at least one of these are known: core skill, domain focus, use case, or assessment style.
+- For senior leadership, CXO, and director-level roles, ready=true once audience/seniority is known and the user has also provided either:
+  business/strategy focus, transformational or entrepreneurial focus, or knowledge-vs-behavioral preference.
+- For software roles, ready=true once role plus at least one concrete skill/domain focus is present.
+- search_query must be concise, specific, and suitable for vector search.
+- missing_question must be exactly one targeted question and empty when ready=true.
+- Do not ask broad exploratory questions once enough detail exists.
+""".strip()
+
+
+SATISFACTION_PROMPT = """
+You check whether the client is satisfied with the current SHL assessment shortlist.
+
+Return only valid JSON:
+{
+  "satisfied": false,
+  "reply": "brief closing reply when satisfied, else empty"
+}
+
+Rules:
+- Mark satisfied=true only when the latest user message clearly accepts, confirms, thanks, or closes the discussion.
+- Do not mark satisfied=true when the user is asking to see results, refine the shortlist, compare options, or add constraints.
+- Prefer false when the message is ambiguous.
+- Keep reply short and suitable for ending the conversation.
+""".strip()
+
+
 ANSWER_PROMPT = """
 You are a conversational SHL assessment recommender for recruiters and HR teams.
 
@@ -129,6 +169,39 @@ def _user_text(messages: list[dict]) -> str:
     ).lower()
 
 
+def _latest_user_text(messages: list[dict]) -> str:
+    for message in reversed(messages):
+        if message.get("role") == "user" and message.get("content"):
+            return str(message.get("content")).strip()
+    return ""
+
+
+def _user_messages(messages: list[dict]) -> list[str]:
+    return [
+        str(message.get("content")).strip()
+        for message in messages
+        if message.get("role") == "user" and message.get("content")
+    ]
+
+
+def deterministic_first_question(messages: list[dict]) -> str:
+    text = _latest_user_text(messages).lower()
+
+    if any(term in text for term in ("senior leadership", "executive", "cxo", "director")):
+        return "Is this senior leadership assessment for selection, benchmarking, or development?"
+
+    if any(term in text for term in ("contact centre", "contact center", "inbound calls", "phone support")):
+        return "What language will the contact center interactions be in?"
+
+    if "full-stack" in text or "full stack" in text:
+        return "Should I optimize the assessment mix for backend, frontend, or a balanced full-stack role?"
+
+    if any(term in text for term in ("assessment", "assessments", "test", "solution")):
+        return "What role are you hiring for, and what are the top skills or competencies you want to assess?"
+
+    return "What role are you hiring for, and what are the top skills or competencies you want to assess?"
+
+
 def _pre_planner_gate(messages: list[dict]) -> dict | None:
     text = _user_text(messages)
 
@@ -161,17 +234,31 @@ def _pre_planner_gate(messages: list[dict]) -> dict | None:
     has_leadership = any(term in text for term in leadership_terms)
     has_audience = any(term in text for term in ("cxo", "director", "executive", "15 years"))
     has_use_case = any(term in text for term in ("selection", "benchmark", "development", "feedback"))
+    has_assessment_style = any(term in text for term in ("knowledge based", "knowledge-based", "behavioral", "behavioural"))
+    has_leadership_focus = any(
+        term in text
+        for term in (
+            "business",
+            "strategic",
+            "strategy",
+            "innovation",
+            "organizational design",
+            "organisation design",
+            "transformational",
+            "entrepreneurial",
+        )
+    )
     if has_leadership and not has_audience:
         return {
             "action": "clarify",
             "search_query": "",
             "reason": "Ask who the senior leadership assessment is meant for.",
         }
-    if has_leadership and has_audience and not has_use_case:
+    if has_leadership and has_audience and not (has_use_case or has_assessment_style or has_leadership_focus):
         return {
             "action": "clarify",
             "search_query": "",
-            "reason": "Ask whether this is for selection, benchmarking, or developmental feedback.",
+            "reason": "Ask one targeted question about the leadership focus or use case before recommending.",
         }
 
     return None
@@ -195,6 +282,56 @@ def _type_code(keys: str) -> str:
         if code and code not in codes:
             codes.append(code)
     return ",".join(codes) or "K"
+
+
+def summarize_role_requirements(messages: list[dict]) -> dict:
+    response = llm.invoke(
+        [
+            {"role": "system", "content": SUMMARY_PROMPT},
+            {"role": "user", "content": _messages_to_text(messages)},
+        ]
+    )
+    summary = _json_from_text(response.content)
+    if not isinstance(summary, dict):
+        return {
+            "ready": False,
+            "search_query": "",
+            "role_summary": "",
+            "missing_question": "",
+        }
+
+    search_query = str(summary.get("search_query") or "").strip()
+    words = search_query.split()
+    if len(words) > 18:
+        search_query = " ".join(words[:18])
+
+    return {
+        "ready": bool(summary.get("ready", False)) and bool(search_query),
+        "search_query": search_query,
+        "role_summary": str(summary.get("role_summary") or "").strip(),
+        "missing_question": str(summary.get("missing_question") or "").strip(),
+    }
+
+
+def check_client_satisfaction(messages: list[dict]) -> dict:
+    latest_user_text = _latest_user_text(messages)
+    if not latest_user_text:
+        return {"satisfied": False, "reply": ""}
+
+    response = llm.invoke(
+        [
+            {"role": "system", "content": SATISFACTION_PROMPT},
+            {"role": "user", "content": _messages_to_text(messages)},
+        ]
+    )
+    payload = _json_from_text(response.content)
+    if not isinstance(payload, dict):
+        return {"satisfied": False, "reply": ""}
+
+    return {
+        "satisfied": bool(payload.get("satisfied", False)),
+        "reply": str(payload.get("reply") or "").strip(),
+    }
 
 
 def _context_recommendations(retrieved_context: list[dict], limit: int = 5) -> list[dict]:
@@ -225,10 +362,62 @@ def _context_recommendations(retrieved_context: list[dict], limit: int = 5) -> l
     return recommendations
 
 
+def _format_languages(languages: str, visible: int = 3) -> str:
+    items = [item.strip() for item in str(languages).split(",") if item.strip()]
+    if len(items) <= visible:
+        return ", ".join(items) or "-"
+    remaining = len(items) - visible
+    return f"{', '.join(items[:visible])} (+{remaining} more)"
+
+
+def _format_reply_table(role_summary: str, retrieved_context: list[dict], limit: int = 4) -> str:
+    rows = []
+    for item in retrieved_context:
+        if not isinstance(item, dict) or item.get("error"):
+            continue
+
+        name = str(item.get("name") or "").strip()
+        url = str(item.get("url") or "").strip()
+        if not name or not url:
+            continue
+
+        rows.append(
+            {
+                "name": name,
+                "test_type": _type_code(item.get("keys", "")),
+                "keys": str(item.get("keys") or "-").strip() or "-",
+                "duration": str(item.get("duration") or "-").strip() or "-",
+                "languages": _format_languages(item.get("languages", "")),
+                "url": url,
+            }
+        )
+        if len(rows) == limit:
+            break
+
+    if not rows:
+        return ""
+
+    title = role_summary or "Recommended SHL assessments"
+    lines = [
+        f"For {title}:",
+        "",
+        "| # | Name | Test Type | Keys | Duration | Languages | URL |",
+        "|---|------|-----------|------|----------|-----------|-----|",
+    ]
+
+    for index, row in enumerate(rows, start=1):
+        lines.append(
+            f"| {index} | {row['name']} | {row['test_type']} | {row['keys']} | {row['duration']} | {row['languages']} | <{row['url']}> |"
+        )
+
+    return "\n".join(lines)
+
+
 def _repair_recommendation_payload(
     raw_response: str,
     plan_action: str,
     retrieved_context: list[dict],
+    role_summary: str,
 ) -> str:
     payload = _json_from_text(raw_response)
     if not isinstance(payload, dict) or plan_action != "retrieve":
@@ -250,15 +439,23 @@ def _repair_recommendation_payload(
         )
     )
     if has_valid_recommendation:
+        table = _format_reply_table(role_summary, retrieved_context)
+        reply = str(payload.get("reply") or "").strip()
+        if table and "| # | Name | Test Type |" not in reply:
+            payload["reply"] = f"{reply}\n\n{table}" if reply else table
+            return json.dumps(payload, ensure_ascii=False)
         return raw_response
 
     names = ", ".join(item["name"] for item in context_recommendations[:3])
+    table = _format_reply_table(role_summary, retrieved_context)
     payload["reply"] = (
         str(payload.get("reply") or "").strip()
         or f"Here are catalog-backed SHL assessments that fit this role: {names}."
     )
     if names and names not in payload["reply"]:
         payload["reply"] = f"{payload['reply']} Recommended catalog options: {names}."
+    if table and "| # | Name | Test Type |" not in payload["reply"]:
+        payload["reply"] = f"{payload['reply']}\n\n{table}"
     payload["recommendations"] = context_recommendations
     payload["end_of_conversation"] = bool(payload.get("end_of_conversation", False))
     return json.dumps(payload, ensure_ascii=False)
@@ -331,6 +528,21 @@ def plan_next_step(messages: list[dict]) -> dict:
     if len(query_words) > 18:
         query = " ".join(query_words[:18])
 
+    if action not in {"compare", "refuse"}:
+        summary = summarize_role_requirements(messages)
+        if summary["ready"]:
+            return {
+                "action": "retrieve",
+                "search_query": summary["search_query"],
+                "reason": summary["role_summary"] or "Sufficient hiring detail collected for retrieval.",
+            }
+        if action == "retrieve" and query:
+            return {
+                "action": "retrieve",
+                "search_query": query,
+                "reason": str(plan.get("reason") or ""),
+            }
+
     return {
         "action": action,
         "search_query": query,
@@ -339,6 +551,31 @@ def plan_next_step(messages: list[dict]) -> dict:
 
 
 def generate_agent_reply(messages: list[dict]) -> str:
+    user_messages = _user_messages(messages)
+    if len(user_messages) == 1:
+        summary = summarize_role_requirements(messages)
+        if not summary["ready"]:
+            question = deterministic_first_question(messages)
+            return json.dumps(
+                {
+                    "reply": question,
+                    "recommendations": [],
+                    "end_of_conversation": False,
+                },
+                ensure_ascii=False,
+            )
+
+    satisfaction = check_client_satisfaction(messages)
+    if satisfaction["satisfied"]:
+        return json.dumps(
+            {
+                "reply": satisfaction["reply"] or "Thanks. I am glad the shortlist works for you.",
+                "recommendations": [],
+                "end_of_conversation": True,
+            },
+            ensure_ascii=False,
+        )
+
     plan = plan_next_step(messages)
     retrieved_context = []
 
@@ -362,4 +599,4 @@ def generate_agent_reply(messages: list[dict]) -> str:
             },
         ]
     )
-    return _repair_recommendation_payload(response.content, plan["action"], retrieved_context)
+    return _repair_recommendation_payload(response.content, plan["action"], retrieved_context, plan["reason"])
