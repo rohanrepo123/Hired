@@ -99,6 +99,17 @@ Test type codes:
 - E = Assessment Exercises
 """.strip()
 
+KEY_CODES = {
+    "Knowledge & Skills": "K",
+    "Personality & Behavior": "P",
+    "Ability & Aptitude": "A",
+    "Simulations": "S",
+    "Biodata & Situational Judgment": "B",
+    "Competencies": "C",
+    "Development & 360": "D",
+    "Assessment Exercises": "E",
+}
+
 
 def _messages_to_text(messages: list[dict]) -> str:
     lines = []
@@ -177,6 +188,82 @@ def _json_from_text(text: str) -> dict | None:
         return None
 
 
+def _type_code(keys: str) -> str:
+    codes = []
+    for key in str(keys).split(","):
+        code = KEY_CODES.get(key.strip())
+        if code and code not in codes:
+            codes.append(code)
+    return ",".join(codes) or "K"
+
+
+def _context_recommendations(retrieved_context: list[dict], limit: int = 5) -> list[dict]:
+    recommendations = []
+    seen_urls = set()
+
+    for item in retrieved_context:
+        if not isinstance(item, dict) or item.get("error"):
+            continue
+
+        name = str(item.get("name") or "").strip()
+        url = str(item.get("url") or "").strip()
+        if not name or not url or url in seen_urls:
+            continue
+
+        recommendations.append(
+            {
+                "name": name,
+                "url": url,
+                "test_type": _type_code(item.get("keys", "")),
+            }
+        )
+        seen_urls.add(url)
+
+        if len(recommendations) == limit:
+            break
+
+    return recommendations
+
+
+def _repair_recommendation_payload(
+    raw_response: str,
+    plan_action: str,
+    retrieved_context: list[dict],
+) -> str:
+    payload = _json_from_text(raw_response)
+    if not isinstance(payload, dict) or plan_action != "retrieve":
+        return raw_response
+
+    context_recommendations = _context_recommendations(retrieved_context)
+    if not context_recommendations:
+        return raw_response
+
+    context_names = {item["name"] for item in context_recommendations}
+    context_urls = {item["url"] for item in context_recommendations}
+    raw_recommendations = payload.get("recommendations", [])
+    has_valid_recommendation = (
+        isinstance(raw_recommendations, list)
+        and any(
+            isinstance(item, dict)
+            and (item.get("name") in context_names or item.get("url") in context_urls)
+            for item in raw_recommendations
+        )
+    )
+    if has_valid_recommendation:
+        return raw_response
+
+    names = ", ".join(item["name"] for item in context_recommendations[:3])
+    payload["reply"] = (
+        str(payload.get("reply") or "").strip()
+        or f"Here are catalog-backed SHL assessments that fit this role: {names}."
+    )
+    if names and names not in payload["reply"]:
+        payload["reply"] = f"{payload['reply']} Recommended catalog options: {names}."
+    payload["recommendations"] = context_recommendations
+    payload["end_of_conversation"] = bool(payload.get("end_of_conversation", False))
+    return json.dumps(payload, ensure_ascii=False)
+
+
 def Search_indocs(query: str) -> str:
     """Tool function: search the existing SHL Chroma vector database."""
     try:
@@ -253,10 +340,10 @@ def plan_next_step(messages: list[dict]) -> dict:
 
 def generate_agent_reply(messages: list[dict]) -> str:
     plan = plan_next_step(messages)
-    retrieved_context = "[]"
+    retrieved_context = []
 
     if plan["action"] in {"retrieve", "compare"} and plan["search_query"]:
-        retrieved_context = Search_indocs(plan["search_query"])
+        retrieved_context = json.loads(Search_indocs(plan["search_query"]))
 
     response = llm.invoke(
         [
@@ -268,12 +355,11 @@ def generate_agent_reply(messages: list[dict]) -> str:
                         "conversation": messages,
                         "planner_action": plan["action"],
                         "planner_search_query": plan["search_query"],
-                        "retrieved_catalog_context": json.loads(retrieved_context),
+                        "retrieved_catalog_context": retrieved_context,
                     },
                     ensure_ascii=False,
                 ),
             },
         ]
     )
-    # print("It's me")
-    return response.content
+    return _repair_recommendation_payload(response.content, plan["action"], retrieved_context)
