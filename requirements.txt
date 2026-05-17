@@ -1,0 +1,13 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2.0
+python-dotenv>=1.0
+langchain>=1.0
+langchain-community>=0.3
+langchain-chroma>=0.2
+langchain-openai>=0.2
+langchain-groq>=0.2
+langchain-google-genai>=2.0
+chromadb>=0.5
+langsmith>=0.1
+requests>=2.31
