@@ -19,10 +19,11 @@ Use the `shl_product_catalog.json` included in this repository. The originally p
 
 ## How To Use
 
-From the project folder:
+After cloning the repository, enter the project folder:
 
 ```powershell
-cd D:\Study_IIITN\CampusX\SHL!
+git clone https://github.com/rohanrepo123/Hired.git
+cd Hired\Asseso
 ```
 
 Activate the Python 3.11 environment you already have:

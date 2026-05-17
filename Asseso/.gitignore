@@ -1,0 +1,9 @@
+.env
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+chroma_db/
+
+uvicorn.out.log
+uvicorn.err.log
