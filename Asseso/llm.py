@@ -5,18 +5,26 @@ from dotenv import load_dotenv
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import tool
 from langchain_groq import ChatGroq
+from langchain_openai import ChatOpenAI
 
 load_dotenv()
 
-MODEL_NAME = os.getenv("GROQ_MODEL", "qwen/qwen3-32b")
+# MODEL_NAME = os.getenv("GROQ_MODEL", "qwen/qwen3-32b")
+MODEL_NAME = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 LLM_TIMEOUT_SECONDS = int(os.getenv("LLM_TIMEOUT_SECONDS", "30"))
-
-llm = ChatGroq(
+    # model="g",
+llm = ChatOpenAI(
     model=MODEL_NAME,
     temperature=0.35,
     max_retries=1,
     request_timeout=LLM_TIMEOUT_SECONDS,
 )
+# llm = ChatGroq(
+#     model=MODEL_NAME,
+#     temperature=0.35,
+#     max_retries=1,
+#     request_timeout=LLM_TIMEOUT_SECONDS,
+# )
 
 # ---------- PROMPTS ----------
 TOOL_AGENT_PROMPT = """
