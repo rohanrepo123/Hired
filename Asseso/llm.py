@@ -9,7 +9,7 @@ from langchain_groq import ChatGroq
 load_dotenv()
 
 MODEL_NAME = os.getenv("GROQ_MODEL", "qwen/qwen3-32b")
-LLM_TIMEOUT_SECONDS = int(os.getenv("LLM_TIMEOUT_SECONDS", "10"))
+LLM_TIMEOUT_SECONDS = int(os.getenv("LLM_TIMEOUT_SECONDS", "30"))
 
 llm = ChatGroq(
     model=MODEL_NAME,
