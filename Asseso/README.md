@@ -1,94 +1,395 @@
-# SHL Assessment Recommender
+# SHL Conversational Assessment Recommender
 
-FastAPI service for the SHL AI Intern assignment. The service is stateless and exposes the required endpoints:
+A production-style conversational AI agent built for the SHL AI Intern Assignment.
 
-- `GET /health`
-- `POST /chat`
+The system helps recruiters and hiring managers discover relevant SHL assessments through natural language conversations instead of manual keyword-based catalog search.
 
-`DB.py` is intentionally left untouched. It remains the manual/catalog vector database creation script.
+The agent supports:
 
-## GitHub Repository
+* Conversational hiring requirement gathering
+* Clarification-based interaction
+* Semantic retrieval using vector embeddings
+* Grounded SHL assessment recommendations
+* Assessment comparison
+* Recommendation refinement
+* Stateless conversation handling
+* Prompt-injection and off-topic refusal
 
-Target repository:
+---
+
+# Features
+
+* FastAPI backend
+* Stateless conversational API
+* Retrieval-Augmented Generation (RAG)
+* ChromaDB vector database
+* OpenAI embeddings
+* Groq LLM integration
+* SHL catalog grounding
+* Structured JSON responses
+* Context compression and summarization
+* Recommendation validation against catalog
+* Semantic retrieval pipeline
+* Production-style agent workflow
+
+---
+
+# Architecture
 
 ```text
-https://github.com/rohanrepo123/Hired.git
+User Query
+    ↓
+FastAPI API Layer
+    ↓
+Conversation State Extraction
+    ↓
+Conversation Summarization
+    ↓
+Semantic Retrieval (ChromaDB)
+    ↓
+Retrieved SHL Catalog Context
+    ↓
+LLM Grounded Reasoning
+    ↓
+Recommendation Validation
+    ↓
+Structured JSON Response
 ```
 
-Use the `shl_product_catalog.json` included in this repository. The originally provided JSON had a formatting issue around line 4795, so this project uses the manually fixed catalog file committed with the code.
+---
 
-## How To Use
+# Tech Stack
 
-After cloning the repository, enter the project folder:
+| Component       | Technology                    |
+| --------------- | ----------------------------- |
+| Backend         | FastAPI                       |
+| LLM             | Groq                          |
+| Embeddings      | OpenAI text-embedding-3-small |
+| Vector Database | ChromaDB                      |
+| Framework       | LangChain                     |
+| Deployment      | Render                        |
+| Language        | Python 3.11                   |
 
-```powershell
+---
+
+# Project Structure
+
+```text
+.
+├── main.py
+├── recommender.py
+├── retrieval.py
+├── llm.py
+├── DB.py
+├── shl_product_catalog.json
+├── chroma_db/
+├── requirements.txt
+├── README.md
+└── APPROACH.md
+```
+
+---
+
+# Original Dataset Source
+
+The SHL product catalog was originally fetched from:
+
+```text
+https://tcp-us-prod-rnd.shl.com/voiceRater/shl-ai-hiring/shl_product_catalog.json
+```
+
+During development, the original JSON file was found to contain a formatting/parsing issue around line `4795`, which caused failures during vector database generation and JSON loading.
+
+To ensure reproducibility and stable retrieval:
+
+* the corrupted JSON structure was manually fixed,
+* the corrected version has been uploaded and committed into this repository as:
+
+```text
+shl_product_catalog.json
+```
+
+The recommendation pipeline and vector database generation use this corrected local catalog file as the source of truth.
+
+---
+
+# Installation & Setup
+
+## Step 1 — Clone Repository
+
+```bash
 git clone https://github.com/rohanrepo123/Hired.git
-cd Hired\Asseso
+cd Hired
 ```
 
-Activate the Python 3.11 environment you already have:
+---
+
+## Step 2 — Create Virtual Environment
+
+Windows:
 
 ```powershell
-D:\Study_IIITN\CampusX\GenAI\venv311\Scripts\activate
+python -m venv venv311
 ```
 
-Create a local `.env` file using `.env.example` as the template, then add your API keys.
+Linux / Mac:
 
-Install dependencies first:
+```bash
+python3 -m venv venv311
+```
+
+---
+
+## Step 3 — Activate Virtual Environment
+
+Windows:
 
 ```powershell
+venv311\Scripts\activate
+```
+
+Linux / Mac:
+
+```bash
+source venv311/bin/activate
+```
+
+---
+
+## Step 4 — Install Dependencies
+
+```bash
 pip install -r requirements.txt
 ```
 
-After requirements are installed, build or refresh the local Chroma vector database separately:
+Dependencies used in this project include: 
 
-```powershell
+* FastAPI
+* LangChain
+* ChromaDB
+* OpenAI embeddings
+* Groq
+* Uvicorn
+* LangSmith
+
+---
+
+## Step 5 — Create `.env` File
+
+Create a `.env` file in the project root:
+
+```env
+OPENAI_API_KEY=your_openai_api_key
+GROQ_API_KEY=your_groq_api_key
+MODEL_NAME=llama-3.1-8b-instant
+```
+
+---
+
+## Step 6 — Build Vector Database
+
+Run:
+
+```bash
 python DB.py
 ```
 
-Then start the FastAPI app from `main.py`:
+This creates the Chroma vector database using:
 
-```powershell
+```text
+shl_product_catalog.json
+```
+
+---
+
+## Step 7 — Start FastAPI Server
+
+```bash
 uvicorn main:app --reload
 ```
 
-## API
+Server starts at:
 
-Health:
-
-```powershell
-curl http://127.0.0.1:8000/health
+```text
+http://127.0.0.1:8000
 ```
 
-Chat:
+---
 
-```powershell
-curl -X POST http://127.0.0.1:8000/chat `
-  -H "Content-Type: application/json" `
-  -d "{\"messages\":[{\"role\":\"user\",\"content\":\"Hiring a senior Java developer with Spring and SQL\"}]}"
+# API Endpoints
+
+## Health Check
+
+```http
+GET /health
 ```
 
-Response shape:
+Response:
 
 ```json
 {
-  "reply": "Based on the retrieved SHL catalog context, here are suitable assessments for the role.",
+  "status": "ok"
+}
+```
+
+---
+
+## Chat Endpoint
+
+```http
+POST /chat
+```
+
+Request:
+
+```json
+{
+  "messages": [
+    {
+      "role": "user",
+      "content": "Hiring a senior Java developer with Spring Boot and SQL."
+    }
+  ]
+}
+```
+
+Response:
+
+```json
+{
+  "reply": "Here are suitable SHL assessments for the role.",
   "recommendations": [
     {
-      "name": "Core Java (Advanced Level) (New)",
-      "url": "https://www.shl.com/products/product-catalog/view/core-java-advanced-level-new/",
-      "test_type": "K"
+      "name": "Automata (New)",
+      "url": "https://www.shl.com/products/product-catalog/view/automata-new/",
+      "test_type": "S"
     }
   ],
   "end_of_conversation": false
 }
 ```
 
-## Notes
+---
 
-- `/chat` expects the full conversation history on every request.
-- The service stores no per-conversation state.
-- `MAX_TURNS` is set to 15 messages. This follows the assignment sample interpretation where one user+assistant exchange is treated as one conversation turn, while still protecting the evaluator from overly long histories.
-- The LLM/RAG pipeline is wrapped with a 25-second timeout, and Groq calls use `LLM_TIMEOUT_SECONDS` with a default of 10 seconds.
-- Recommendations are generated by Groq from retrieved Chroma context and validated against the fixed `shl_product_catalog.json` included in the GitHub repository.
-- Refusals and clarification turns return an empty `recommendations` list.
+# Stateless Architecture
+
+The API is fully stateless.
+
+Every `/chat` request contains the complete conversation history.
+
+The backend stores:
+
+* no user sessions,
+* no Redis memory,
+* no server-side chat state.
+
+Instead, the system reconstructs conversational state dynamically from:
+
+* previous messages,
+* summarized hiring intent,
+* retrieved catalog context.
+
+This design aligns with scalable production conversational AI architecture.
+
+---
+
+# Retrieval Pipeline
+
+The system uses:
+
+* OpenAI embeddings
+* Chroma cosine similarity search
+* semantic retrieval
+* catalog grounding
+
+Recommendations are generated ONLY from retrieved SHL catalog entries.
+
+The retrieval pipeline dynamically:
+
+* analyzes hiring intent,
+* retrieves semantically relevant assessments,
+* compresses retrieved context,
+* and passes grounded information to the LLM.
+
+---
+
+# Context Engineering
+
+To avoid token overflow and large-context failures:
+
+* conversation summarization was implemented,
+* retrieved documents were truncated,
+* recent-message prioritization was added,
+* compact conversational memory was introduced.
+
+This improved:
+
+* latency,
+* retrieval quality,
+* token efficiency,
+* conversational coherence.
+
+---
+
+# Safety Features
+
+The agent:
+
+* refuses prompt injection attempts
+* rejects unrelated/off-topic queries
+* prevents hallucinated recommendations
+* validates URLs against SHL catalog
+* limits recommendations to 1–10 items
+* sanitizes structured outputs
+
+---
+
+# Deployment
+
+The application is deployed on Render.
+
+Environment variables are configured through:
+
+* Render Environment Settings
+* automatic redeployment workflow
+
+---
+
+# Assignment Alignment
+
+This implementation follows the SHL assignment requirements:
+
+* conversational recommendation flow
+* clarification handling
+* recommendation refinement
+* grounded catalog retrieval
+* stateless API design
+* JSON schema compliance
+* refusal handling
+* context engineering
+* agentic conversational workflow
+
+The project was designed according to the assignment goals mentioned in the official SHL document:
+
+* problem solving
+* programming skills
+* context engineering
+* agent design 
+
+---
+
+# Important Notes
+
+* The API is fully stateless.
+* Every `/chat` request must include the complete conversation history.
+* Recommendations are generated only from retrieved SHL catalog entries.
+* Conversation summarization is used to maintain scalable conversational memory.
+* Retrieved context is compressed before being passed to the LLM.
+* Final outputs are validated before returning structured JSON responses.
+* The uploaded corrected catalog file is used instead of the broken original dataset source.
+
+---
+
+# Author
+
+Rohan
